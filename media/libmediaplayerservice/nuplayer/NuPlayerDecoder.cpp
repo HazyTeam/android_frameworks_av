@@ -32,6 +32,8 @@
 #include <media/stagefright/MediaCodec.h>
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MediaErrors.h>
+#include <media/stagefright/ExtendedCodec.h>
+
 
 #include "avc_utils.h"
 #include "ATSParser.h"
@@ -139,7 +141,25 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     mComponentName.append(" decoder");
     ALOGV("[%s] onConfigure (surface=%p)", mComponentName.c_str(), surface.get());
 
-    mCodec = MediaCodec::CreateByType(mCodecLooper, mime.c_str(), false /* encoder */);
+    ExtendedCodec::overrideMimeType(format, &mime);
+    ExtendedCodec::overrideComponentName(0, format, &mComponentName, &mime, false);
+
+    /* time allocateNode here */
+    {
+        if (mPlayerExtendedStats == NULL) {
+            format->findObject(MEDIA_EXTENDED_STATS, (sp<RefBase>*)&mPlayerExtendedStats);
+        }
+        int32_t isVideo = !strncasecmp(mime.c_str(), "video/", 6);
+        ExtendedStats::AutoProfile autoProfile(
+                STATS_PROFILE_ALLOCATE_NODE(isVideo), mPlayerExtendedStats);
+
+        if (!mComponentName.startsWith(mime.c_str())) {
+            mCodec = MediaCodec::CreateByComponentName(mCodecLooper, mComponentName.c_str());
+        } else {
+            mCodec = MediaCodec::CreateByType(mCodecLooper, mime.c_str(), false /* encoder */);
+        }
+    }
+
     int32_t secure = 0;
     if (format->findInt32("secure", &secure) && secure != 0) {
         if (mCodec != NULL) {
@@ -170,6 +190,9 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
         // Codec will try to connect to the surface, which is where
         // any error signaling will occur.
         ALOGW_IF(err != OK, "failed to disconnect from surface: %d", err);
+    }
+    if (mPlayerExtendedStats != NULL) {
+        format->setObject(MEDIA_EXTENDED_STATS, mPlayerExtendedStats);
     }
     err = mCodec->configure(
             format, surface, NULL /* crypto */, 0 /* flags */);
@@ -268,8 +291,13 @@ void NuPlayer::Decoder::onFlush(bool notifyComplete) {
     }
 }
 
-void NuPlayer::Decoder::onShutdown(bool notifyComplete) {
-    status_t err = OK;
+void NuPlayer::Decoder::configure(const sp<AMessage> &format) {
+    sp<AMessage> msg = new AMessage(kWhatConfigure, id());
+    msg->setMessage("format", format);
+
+    sp<AMessage> response;
+    PostAndAwaitResponse(msg, &response);
+}
 
     // if there is a pending resume request, notify complete now
     notifyResumeCompleteIfNecessary();
@@ -773,6 +801,8 @@ bool NuPlayer::Decoder::onInputBufferFetched(const sp<AMessage> &msg) {
                 mMediaBuffers.editItemAt(bufferIx) = mediaBuffer;
             }
         }
+
+        PLAYER_STATS(logBitRate, buffer->size(), timeUs);
     }
     return true;
 }
@@ -807,8 +837,197 @@ void NuPlayer::Decoder::onRenderBuffer(const sp<AMessage> &msg) {
     }
 }
 
-bool NuPlayer::Decoder::supportsSeamlessAudioFormatChange(
-        const sp<AMessage> &targetFormat) const {
+void NuPlayer::Decoder::onFlush() {
+    status_t err = OK;
+    if (mCodec != NULL) {
+        err = mCodec->flush();
+        mCSDsToSubmit = mCSDsForCurrentFormat; // copy operator
+        ++mBufferGeneration;
+    }
+
+    if (err != OK) {
+        ALOGE("failed to flush %s (err=%d)", mComponentName.c_str(), err);
+        handleError(err);
+        // finish with posting kWhatFlushCompleted.
+        // we attempt to release the buffers even if flush fails.
+    }
+    releaseAndResetMediaBuffers();
+
+    sp<AMessage> notify = mNotify->dup();
+    notify->setInt32("what", kWhatFlushCompleted);
+    notify->post();
+    mPaused = true;
+}
+
+void NuPlayer::Decoder::onResume() {
+    mPaused = false;
+}
+
+void NuPlayer::Decoder::onShutdown() {
+    status_t err = OK;
+    if (mCodec != NULL) {
+        err = mCodec->release();
+        mCodec = NULL;
+        ++mBufferGeneration;
+
+        if (mNativeWindow != NULL) {
+            // reconnect to surface as MediaCodec disconnected from it
+            status_t error =
+                    native_window_api_connect(
+                            mNativeWindow->getNativeWindow().get(),
+                            NATIVE_WINDOW_API_MEDIA);
+            ALOGW_IF(error != NO_ERROR,
+                    "[%s] failed to connect to native window, error=%d",
+                    mComponentName.c_str(), error);
+        }
+        mComponentName = "decoder";
+    }
+
+    releaseAndResetMediaBuffers();
+
+    if (err != OK) {
+        ALOGE("failed to release %s (err=%d)", mComponentName.c_str(), err);
+        handleError(err);
+        // finish with posting kWhatShutdownCompleted.
+    }
+
+    sp<AMessage> notify = mNotify->dup();
+    notify->setInt32("what", kWhatShutdownCompleted);
+    notify->post();
+    mPaused = true;
+}
+
+void NuPlayer::Decoder::onMessageReceived(const sp<AMessage> &msg) {
+    ALOGV("[%s] onMessage: %s", mComponentName.c_str(), msg->debugString().c_str());
+
+    switch (msg->what()) {
+        case kWhatConfigure:
+        {
+            uint32_t replyID;
+            CHECK(msg->senderAwaitsResponse(&replyID));
+
+            sp<AMessage> format;
+            CHECK(msg->findMessage("format", &format));
+            onConfigure(format);
+
+            (new AMessage)->postReply(replyID);
+            break;
+        }
+
+        case kWhatUpdateFormat:
+        {
+            sp<AMessage> format;
+            CHECK(msg->findMessage("format", &format));
+            rememberCodecSpecificData(format);
+            break;
+        }
+
+        case kWhatGetInputBuffers:
+        {
+            uint32_t replyID;
+            CHECK(msg->senderAwaitsResponse(&replyID));
+
+            Vector<sp<ABuffer> > *dstBuffers;
+            CHECK(msg->findPointer("buffers", (void **)&dstBuffers));
+
+            dstBuffers->clear();
+            for (size_t i = 0; i < mInputBuffers.size(); i++) {
+                dstBuffers->push(mInputBuffers[i]);
+            }
+
+            (new AMessage)->postReply(replyID);
+            break;
+        }
+
+        case kWhatCodecNotify:
+        {
+            if (!isStaleReply(msg)) {
+                int32_t numInput, numOutput;
+
+                if (!msg->findInt32("input-buffers", &numInput)) {
+                    numInput = INT32_MAX;
+                }
+
+                if (!msg->findInt32("output-buffers", &numOutput)) {
+                    numOutput = INT32_MAX;
+                }
+
+                if (!mPaused) {
+                    while (numInput-- > 0 && handleAnInputBuffer()) {}
+                }
+
+                while (numOutput-- > 0 && handleAnOutputBuffer()) {}
+            }
+
+            requestCodecNotification();
+            break;
+        }
+
+        case kWhatInputBufferFilled:
+        {
+            if (!isStaleReply(msg)) {
+                if (!mPendingInputMessages.empty()
+                        || !onInputBufferFilled(msg)) {
+                    mPendingInputMessages.push_back(msg);
+                }
+            }
+
+            break;
+        }
+
+        case kWhatRenderBuffer:
+        {
+            if (!isStaleReply(msg)) {
+                onRenderBuffer(msg);
+            }
+            break;
+        }
+
+        case kWhatFlush:
+        {
+            sp<AMessage> format;
+            if (msg->findMessage("new-format", &format)) {
+                rememberCodecSpecificData(format);
+            }
+            onFlush();
+            break;
+        }
+
+        case kWhatResume:
+        {
+            onResume();
+            break;
+        }
+
+        case kWhatShutdown:
+        {
+            onShutdown();
+            break;
+        }
+
+        default:
+            TRESPASS();
+            break;
+    }
+}
+
+void NuPlayer::Decoder::signalFlush(const sp<AMessage> &format) {
+    sp<AMessage> msg = new AMessage(kWhatFlush, id());
+    if (format != NULL) {
+        msg->setMessage("new-format", format);
+    }
+    msg->post();
+}
+
+void NuPlayer::Decoder::signalResume() {
+    (new AMessage(kWhatResume, id()))->post();
+}
+
+void NuPlayer::Decoder::initiateShutdown() {
+    (new AMessage(kWhatShutdown, id()))->post();
+}
+
+bool NuPlayer::Decoder::supportsSeamlessAudioFormatChange(const sp<AMessage> &targetFormat) const {
     if (targetFormat == NULL) {
         return true;
     }

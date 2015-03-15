@@ -55,7 +55,13 @@ void MediaBufferGroup::add_buffer(MediaBuffer *buffer) {
     mLastBuffer = buffer;
 }
 
-#ifdef USES_LEGACY_ACQUIRE_WVM
+#ifdef ADD_LEGACY_ACQUIRE_BUFFER_SYMBOL
+extern "C" status_t _ZN7android16MediaBufferGroup14acquire_bufferEPPNS_11MediaBufferE(
+    MediaBufferGroup* group, MediaBuffer **out) {
+    return group->acquire_buffer(out, false);
+}
+#endif
+
 status_t MediaBufferGroup::acquire_buffer(
     MediaBuffer **out) {
         return this->acquire_buffer(out, false);

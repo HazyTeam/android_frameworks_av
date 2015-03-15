@@ -13,7 +13,6 @@ LOCAL_SRC_FILES:=                 \
     AMessage.cpp                  \
     ANetworkSession.cpp           \
     AString.cpp                   \
-    AStringUtils.cpp              \
     AWakeLock.cpp                 \
     ParsedMessage.cpp             \
     base64.cpp                    \
@@ -25,7 +24,6 @@ LOCAL_C_INCLUDES:= \
 LOCAL_SHARED_LIBRARIES := \
         libbinder         \
         libutils          \
-        libcutils         \
         liblog            \
         libpowermanager
 

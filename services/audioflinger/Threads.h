@@ -1,5 +1,6 @@
 /*
-**
+** Copyright (c) 2013, The Linux Foundation. All rights reserved.
+** Not a Contribution.
 ** Copyright 2012, The Android Open Source Project
 **
 ** Licensed under the Apache License, Version 2.0 (the "License");
@@ -249,6 +250,9 @@ public:
     virtual     status_t    setParameters(const String8& keyValuePairs);
     virtual     String8     getParameters(const String8& keys) = 0;
     virtual     void        audioConfigChanged(int event, int param = 0) = 0;
+#ifdef QCOM_DIRECTTRACK
+                void        effectConfigChanged();
+#endif
                 // sendConfigEvent_l() must be called with ThreadBase::mLock held
                 // Can temporarily release the lock if waiting for a reply from
                 // processConfigEvents_l().
@@ -581,7 +585,8 @@ public:
                 virtual bool     isValidSyncEvent(const sp<SyncEvent>& event) const;
 
                 // called with AudioFlinger lock held
-                        void     invalidateTracks(audio_stream_type_t streamType);
+       void     invalidateTracks(audio_stream_type_t streamType);
+       virtual  void onFatalError();
 
     virtual     size_t      frameCount() const { return mNormalFrameCount; }
 
@@ -723,6 +728,7 @@ private:
     bool        destroyTrack_l(const sp<Track>& track);
     void        removeTrack_l(const sp<Track>& track);
     void        broadcast_l();
+    void        invalidateTracks_l(audio_stream_type_t streamType);
 
     void        readOutputParameters_l();
 
@@ -948,6 +954,7 @@ protected:
     virtual     bool        waitingAsyncCallback();
     virtual     bool        waitingAsyncCallback_l();
     virtual     void        onAddNewTrack_l();
+    virtual     void        onFatalError();
 
 private:
     size_t      mPausedWriteLength;     // length in bytes of write interrupted by pause

@@ -42,6 +42,7 @@ LOCAL_SHARED_LIBRARIES :=       \
     libstagefright_wfd          \
     libutils                    \
     libvorbisidec               \
+    libdrmframework             \
 
 LOCAL_STATIC_LIBRARIES :=       \
     libstagefright_nuplayer     \
@@ -58,6 +59,12 @@ LOCAL_C_INCLUDES :=                                                 \
 LOCAL_MODULE:= libmediaplayerservice
 
 LOCAL_32_BIT_ONLY := true
+
+ifeq ($(TARGET_ENABLE_QC_AV_ENHANCEMENTS),true)
+    LOCAL_CFLAGS += -DENABLE_AV_ENHANCEMENTS
+    LOCAL_C_INCLUDES += $(TOP)/frameworks/av/include/media
+    LOCAL_C_INCLUDES += $(TOP)/$(call project-path-for,qcom-media)/mm-core/inc
+endif
 
 include $(BUILD_SHARED_LIBRARY)
 

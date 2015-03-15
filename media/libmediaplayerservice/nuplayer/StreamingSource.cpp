@@ -167,9 +167,13 @@ status_t NuPlayer::StreamingSource::postReadBuffer() {
     return OK;
 }
 
-bool NuPlayer::StreamingSource::haveSufficientDataOnAllTracks() {
-    // We're going to buffer at least 2 secs worth data on all tracks before
-    // starting playback (both at startup and after a seek).
+sp<MetaData> NuPlayer::StreamingSource::getFormatMeta(bool audio) {
+    if (mTSParser == NULL) {
+        return NULL;
+    }
+
+    ATSParser::SourceType type =
+        audio ? ATSParser::AUDIO : ATSParser::VIDEO;
 
     static const int64_t kMinDurationUs = 2000000ll;
 

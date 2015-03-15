@@ -22,6 +22,7 @@
 #include <utils/Log.h>
 
 #include "include/StagefrightMetadataRetriever.h"
+#include "include/HTTPBase.h"
 
 #include <media/IMediaHTTPService.h>
 #include <media/stagefright/foundation/ADebug.h>
@@ -32,6 +33,8 @@
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/OMXCodec.h>
 #include <media/stagefright/MediaDefs.h>
+#include <media/stagefright/Utils.h>
+#include "include/ExtendedUtils.h"
 #include <CharacterEncodingDetector.h>
 
 namespace android {
@@ -52,13 +55,19 @@ StagefrightMetadataRetriever::~StagefrightMetadataRetriever() {
     mAlbumArt = NULL;
 
     mClient.disconnect();
+
+    if (mSource != NULL &&
+        (mSource->flags() & DataSource::kIsHTTPBasedSource)) {
+        mExtractor.clear();
+        static_cast<HTTPBase *>(mSource.get())->disconnect();
+    }
 }
 
 status_t StagefrightMetadataRetriever::setDataSource(
         const sp<IMediaHTTPService> &httpService,
         const char *uri,
         const KeyedVector<String8, String8> *headers) {
-    ALOGV("setDataSource(%s)", uri);
+    ALOGI("setDataSource(%s)", uriDebugString(uri, false).c_str());
 
     mParsedMetaData = false;
     mMetaData.clear();
@@ -91,6 +100,9 @@ status_t StagefrightMetadataRetriever::setDataSource(
     fd = dup(fd);
 
     ALOGV("setDataSource(%d, %" PRId64 ", %" PRId64 ")", fd, offset, length);
+    if (fd) {
+        ExtendedUtils::printFileName(fd);
+    }
 
     mParsedMetaData = false;
     mMetaData.clear();
@@ -155,8 +167,11 @@ static VideoFrame *extractVideoFrameWithCodecFlags(
     // XXX:
     // Once all vendors support OMX_COLOR_FormatYUV420Planar, we can
     // remove this check and always set the decoder output color format
-    if (isYUV420PlanarSupported(client, trackMeta)) {
-        format->setInt32(kKeyColorFormat, OMX_COLOR_FormatYUV420Planar);
+    // skip this check for software decoders
+    if (!(flags & OMXCodec::kSoftwareCodecsOnly)) {
+        if (isYUV420PlanarSupported(client, trackMeta)) {
+            format->setInt32(kKeyColorFormat, OMX_COLOR_FormatYUV420Planar);
+        }
     }
 
     sp<MediaSource> decoder =
@@ -353,6 +368,10 @@ VideoFrame *StagefrightMetadataRetriever::getFrameAtTime(
     for (i = 0; i < n; ++i) {
         sp<MetaData> meta = mExtractor->getTrackMetaData(i);
 
+        if (meta == NULL) {
+            continue;
+        }
+
         const char *mime;
         CHECK(meta->findCString(kKeyMIMEType, &mime));
 
@@ -386,7 +405,7 @@ VideoFrame *StagefrightMetadataRetriever::getFrameAtTime(
 
     VideoFrame *frame =
         extractVideoFrameWithCodecFlags(
-                &mClient, trackMeta, source, OMXCodec::kPreferSoftwareCodecs,
+                &mClient, trackMeta, source, OMXCodec::kSoftwareCodecsOnly,
                 timeUs, option);
 
     if (frame == NULL) {
@@ -514,6 +533,10 @@ void StagefrightMetadataRetriever::parseMetaData() {
 
     size_t numTracks = mExtractor->countTracks();
 
+    if (numTracks == 0) {      //If no tracks available, corrupt or not valid stream
+        return;
+    }
+
     char tmp[32];
     sprintf(tmp, "%zu", numTracks);
 
@@ -531,6 +554,9 @@ void StagefrightMetadataRetriever::parseMetaData() {
     String8 timedTextLang;
     for (size_t i = 0; i < numTracks; ++i) {
         sp<MetaData> trackMeta = mExtractor->getTrackMetaData(i);
+        if (trackMeta == NULL) {
+            continue;
+        }
 
         int64_t durationUs;
         if (trackMeta->findInt64(kKeyDuration, &durationUs)) {
@@ -557,9 +583,13 @@ void StagefrightMetadataRetriever::parseMetaData() {
                 }
             } else if (!strcasecmp(mime, MEDIA_MIMETYPE_TEXT_3GPP)) {
                 const char *lang;
-                trackMeta->findCString(kKeyMediaLanguage, &lang);
-                timedTextLang.append(String8(lang));
-                timedTextLang.append(String8(":"));
+                bool success = trackMeta->findCString(kKeyMediaLanguage, &lang);
+                if (success) {
+                    timedTextLang.append(String8(lang));
+                    timedTextLang.append(String8(":"));
+                } else {
+                    ALOGE("No language found for timed text");
+                }
             }
         }
     }

@@ -19,8 +19,16 @@
 #define NU_PLAYER_H_
 
 #include <media/MediaPlayerInterface.h>
+#include <media/stagefright/ExtendedStats.h>
 #include <media/stagefright/foundation/AHandler.h>
 #include <media/stagefright/NativeWindowWrapper.h>
+
+#define PLAYER_STATS(func, ...) \
+    do { \
+        if(mPlayerExtendedStats != NULL) { \
+            mPlayerExtendedStats->func(__VA_ARGS__);} \
+    } \
+    while(0)
 
 namespace android {
 
@@ -71,6 +79,13 @@ struct NuPlayer : public AHandler {
 
     sp<MetaData> getFileMeta();
 
+    int64_t getServerTimeoutUs();
+
+    void suspendAsync();
+    void resumeFromSuspendedAsync();
+
+    static const size_t kAggregateBufferSizeBytes;
+
 protected:
     virtual ~NuPlayer();
 
@@ -119,7 +134,10 @@ private:
         kWhatGetTrackInfo               = 'gTrI',
         kWhatGetSelectedTrack           = 'gSel',
         kWhatSelectTrack                = 'selT',
+        kWhatSuspend                    = 'susp',
+        kWhatResumeFromSuspended        = 'refs',
     };
+    sp<PlayerExtendedStats> mPlayerExtendedStats;
 
     wp<NuPlayerDriver> mDriver;
     bool mUIDValid;
@@ -130,7 +148,10 @@ private:
     sp<MediaPlayerBase::AudioSink> mAudioSink;
     sp<DecoderBase> mVideoDecoder;
     bool mOffloadAudio;
-    sp<DecoderBase> mAudioDecoder;
+    bool mOffloadDecodedPCM;
+    bool mSwitchingFromPcmOffload;
+    bool mIsStreaming;
+    sp<Decoder> mAudioDecoder;
     sp<CCDecoder> mCCDecoder;
     sp<Renderer> mRenderer;
     sp<ALooper> mRendererLooper;
@@ -176,6 +197,15 @@ private:
     int32_t mVideoScalingMode;
 
     bool mStarted;
+    bool mBuffering;
+    bool mPlaying;
+
+    bool mSeeking;
+
+    bool mSkipAudioFlushAfterSuspend;
+    bool mSkipVideoFlushAfterSuspend;
+
+    bool mImageDisplayed;
 
     // Actual pause state, either as requested by client or due to buffering.
     bool mPaused;
@@ -233,6 +263,9 @@ private:
     void performScanSources();
     void performSetSurface(const sp<NativeWindowWrapper> &wrapper);
     void performResumeDecoders(bool needNotify);
+
+    void performSuspend();
+    void performResumeFromSuspended();
 
     void onSourceNotify(const sp<AMessage> &msg);
     void onClosedCaptionNotify(const sp<AMessage> &msg);

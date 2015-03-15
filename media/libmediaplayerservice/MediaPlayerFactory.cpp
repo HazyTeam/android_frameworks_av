@@ -33,6 +33,7 @@
 #include "TestPlayerStub.h"
 #include "StagefrightPlayer.h"
 #include "nuplayer/NuPlayerDriver.h"
+#include <dlfcn.h>
 
 namespace android {
 
@@ -65,11 +66,6 @@ status_t MediaPlayerFactory::registerFactory_l(IFactory* factory,
 
 static player_type getDefaultPlayerType() {
     char value[PROPERTY_VALUE_MAX];
-    if (property_get("media.stagefright.use-awesome", value, NULL)
-            && (!strcmp("1", value) || !strcasecmp("true", value))) {
-        return STAGEFRIGHT_PLAYER;
-    }
-
     // TODO: remove this EXPERIMENTAL developer settings property
     if (property_get("persist.sys.media.use-awesome", value, NULL)
             && !strcasecmp("true", value)) {
@@ -264,6 +260,11 @@ class NuPlayerFactory : public MediaPlayerFactory::IFactory {
             return kOurScore;
         }
 
+        if (!strncasecmp("http://", url, 7)
+                || !strncasecmp("https://", url, 8)) {
+            return kOurScore;
+        }
+
         return 0.0;
     }
 
@@ -377,6 +378,32 @@ void MediaPlayerFactory::registerBuiltinFactories() {
     registerFactory_l(new SonivoxPlayerFactory(), SONIVOX_PLAYER);
     registerFactory_l(new TestPlayerFactory(), TEST_PLAYER);
 
+    const char* FACTORY_LIB           = "libdashplayer.so";
+    const char* FACTORY_CREATE_FN     = "CreateDASHFactory";
+
+    MediaPlayerFactory::IFactory* pFactory  = NULL;
+    void* pFactoryLib = NULL;
+    typedef MediaPlayerFactory::IFactory* (*CreateDASHDriverFn)();
+    ALOGE("calling dlopen on FACTORY_LIB");
+    pFactoryLib = ::dlopen(FACTORY_LIB, RTLD_LAZY);
+    if (pFactoryLib == NULL) {
+      ALOGE("Failed to open FACTORY_LIB Error : %s ",::dlerror());
+    } else {
+      CreateDASHDriverFn pCreateFnPtr;
+      ALOGE("calling dlsym on pFactoryLib for FACTORY_CREATE_FN ");
+      pCreateFnPtr = (CreateDASHDriverFn) dlsym(pFactoryLib, FACTORY_CREATE_FN);
+      if (pCreateFnPtr == NULL) {
+          ALOGE("Could not locate pCreateFnPtr");
+      } else {
+        pFactory = pCreateFnPtr();
+        if(pFactory == NULL) {
+          ALOGE("Failed to invoke CreateDASHDriverFn...");
+        } else {
+          ALOGE("registering DASH Player factory...");
+          registerFactory_l(pFactory,DASH_PLAYER);
+        }
+      }
+    }
     sInitComplete = true;
 }
 

@@ -76,8 +76,8 @@ struct NuPlayer::Renderer : public AHandler {
             const sp<AMessage> &format,
             bool offloadOnly,
             bool hasVideo,
-            uint32_t flags,
-            bool *isOffloaded);
+            bool isStreaming,
+            uint32_t flags);
     void closeAudioSink();
 
     enum {
@@ -129,6 +129,7 @@ private:
 
     static const int64_t kMinPositionUpdateDelayUs;
 
+    sp<PlayerExtendedStats> mPlayerExtendedStats;
     sp<MediaPlayerBase::AudioSink> mAudioSink;
     sp<AMessage> mNotify;
     Mutex mLock;
@@ -172,6 +173,7 @@ private:
     int64_t mPausePositionMediaTimeUs;
 
     bool mVideoSampleReceived;
+    bool mAudioRenderingStarted;
     bool mVideoRenderingStarted;
     int32_t mVideoRenderingStartGeneration;
     int32_t mAudioRenderingStartGeneration;
@@ -194,15 +196,9 @@ private:
 
     int32_t mTotalBuffersQueued;
     int32_t mLastAudioBufferDrained;
-
     sp<AWakeLock> mWakeLock;
 
-    status_t getCurrentPositionOnLooper(int64_t *mediaUs);
-    status_t getCurrentPositionOnLooper(
-            int64_t *mediaUs, int64_t nowUs, bool allowPastQueuedVideo = false);
-    bool getCurrentPositionIfPaused_l(int64_t *mediaUs);
-    status_t getCurrentPositionFromAnchor(
-            int64_t *mediaUs, int64_t nowUs, bool allowPastQueuedVideo = false);
+    List<sp<AMessage> > mPendingInputMessages;
 
     size_t fillAudioBuffer(void *buffer, size_t size);
 
@@ -234,6 +230,7 @@ private:
             const sp<AMessage> &format,
             bool offloadOnly,
             bool hasVideo,
+            bool isStreaming,
             uint32_t flags);
     void onCloseAudioSink();
 
