@@ -368,9 +368,11 @@ WAVSource::~WAVSource() {
 
 status_t WAVSource::start(MetaData *params) {
 
-    CHECK(!mStarted);
-
     ALOGV("WAVSource::start");
+
+    if (mStarted) {
+        return OK;
+    }
 
     mGroup = new MediaBufferGroup;
     mGroup->add_buffer(new MediaBuffer(kMaxFrameSize));

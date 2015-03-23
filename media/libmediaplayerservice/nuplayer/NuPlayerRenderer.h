@@ -76,8 +76,9 @@ struct NuPlayer::Renderer : public AHandler {
             const sp<AMessage> &format,
             bool offloadOnly,
             bool hasVideo,
+            uint32_t flags,
             bool isStreaming,
-            uint32_t flags);
+            bool *isOffloaded);
     void closeAudioSink();
 
     enum {
@@ -198,7 +199,12 @@ private:
     int32_t mLastAudioBufferDrained;
     sp<AWakeLock> mWakeLock;
 
-    List<sp<AMessage> > mPendingInputMessages;
+    status_t getCurrentPositionOnLooper(int64_t *mediaUs);
+    status_t getCurrentPositionOnLooper(
+            int64_t *mediaUs, int64_t nowUs, bool allowPastQueuedVideo = false);
+    bool getCurrentPositionIfPaused_l(int64_t *mediaUs);
+    status_t getCurrentPositionFromAnchor(
+            int64_t *mediaUs, int64_t nowUs, bool allowPastQueuedVideo = false);
 
     size_t fillAudioBuffer(void *buffer, size_t size);
 

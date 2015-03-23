@@ -151,10 +151,12 @@ AudioTrack::AudioTrack(
       mPreviousPriority(ANDROID_PRIORITY_NORMAL),
       mPreviousSchedulingGroup(SP_DEFAULT),
       mUseSmallBuf(false),
-      mPausedPosition(0)
 #ifdef QCOM_DIRECTTRACK
-      ,mAudioFlinger(NULL),
+      mPausedPosition(0),
+      mAudioFlinger(NULL),
       mObserver(NULL)
+#else
+      mPausedPosition(0)
 #endif
 
 {
@@ -185,10 +187,12 @@ AudioTrack::AudioTrack(
       mPreviousPriority(ANDROID_PRIORITY_NORMAL),
       mPreviousSchedulingGroup(SP_DEFAULT),
       mUseSmallBuf(false),
-      mPausedPosition(0)
 #ifdef QCOM_DIRECTTRACK
-      ,mAudioFlinger(NULL),
+      mPausedPosition(0),
+      mAudioFlinger(NULL),
       mObserver(NULL)
+#else
+      mPausedPosition(0)
 #endif
 {
     mStatus = set(streamType, sampleRate, format, channelMask,
@@ -278,7 +282,7 @@ bool AudioTrack::canOffloadTrack(
             mPcmTrackOffloadInfo.use_small_bufs = true;
 
             decision = AudioSystem::isOffloadSupported(mPcmTrackOffloadInfo);
-            ALOGI("TrackOffload: Pcm Track offloaded decided %s", decision?"true":"false");
+            ALOGV("TrackOffload: Pcm Track offloaded decided %s", decision?"true":"false");
             ALOGV("TrackOffload: offloading audio output for stream type"
               "%d, usage %d, sample rate %u, format %#x,"
               " channel mask %#x, flags %#x, transferType %d, offloadInfo %p",
@@ -287,7 +291,7 @@ bool AudioTrack::canOffloadTrack(
             return decision;
         }
 
-        ALOGD("TrackOffload: Not track offloading offloading audio output for stream type"
+        ALOGV("TrackOffload: Not track offloading offloading audio output for stream type"
               "%d, usage %d, sample rate %u, format %#x,"
               " channel mask %#x, flags %#x, transferType %d, offloadInfo %p",
               streamType, attributes->usage, mSampleRate, format, channelMask, flags,
@@ -383,7 +387,7 @@ status_t AudioTrack::set(
         memcpy(&mAttributes, pAttributes, sizeof(audio_attributes_t));
         ALOGV("Building AudioTrack with attributes: usage=%d content=%d flags=0x%x tags=[%s]",
                 mAttributes.usage, mAttributes.content_type, mAttributes.flags, mAttributes.tags);
-        mStreamType = AUDIO_STREAM_DEFAULT;
+        mStreamType = audio_attributes_to_stream_type(&mAttributes);
     }
 
     // these below should probably come from the audioFlinger too...
@@ -423,6 +427,7 @@ status_t AudioTrack::set(
                 // FIXME why can't we allow direct AND fast?
                 ((flags | AUDIO_OUTPUT_FLAG_DIRECT) & ~AUDIO_OUTPUT_FLAG_FAST);
     }
+
     // only allow deep buffering for music stream type
     if (mStreamType != AUDIO_STREAM_MUSIC) {
         flags = (audio_output_flags_t)(flags &~AUDIO_OUTPUT_FLAG_DEEP_BUFFER);
@@ -432,10 +437,14 @@ status_t AudioTrack::set(
         }
     }
 
+    audio_stream_type_t attr_streamType = (mStreamType == AUDIO_STREAM_DEFAULT) ?
+                                           audio_attributes_to_stream_type(&mAttributes):
+                                           mStreamType;
+
 #ifdef QCOM_HARDWARE
-    if ((mStreamType == AUDIO_STREAM_VOICE_CALL) &&
+    if ((attr_streamType == AUDIO_STREAM_VOICE_CALL) &&
         (mChannelCount == 1) &&
-        (mSampleRate == 8000 || mSampleRate == 16000)) {
+        (sampleRate == 8000 || sampleRate == 16000)) {
         // Allow Voip direct output only if:
         // audio mode is MODE_IN_COMMUNCATION; AND
         // voip output is not opened already; AND
@@ -463,7 +472,7 @@ status_t AudioTrack::set(
         }
 
         if ((mode == AUDIO_MODE_IN_COMMUNICATION) && (voipOutCount == 0) &&
-            ((voipSampleRate == 0) || (voipSampleRate == mSampleRate))) {
+            ((voipSampleRate == 0) || (voipSampleRate == sampleRate))) {
             if (audio_is_linear_pcm(format)) {
                 char propValue[PROPERTY_VALUE_MAX] = {0};
                 property_get("use.voice.path.for.pcm.voip", propValue, "0");
@@ -481,6 +490,13 @@ status_t AudioTrack::set(
         }
     }
 #endif
+
+
+    // force direct flag if HW A/V sync requested
+    if ((flags & AUDIO_OUTPUT_FLAG_HW_AV_SYNC) != 0) {
+        flags = (audio_output_flags_t)(flags | AUDIO_OUTPUT_FLAG_DIRECT);
+
+    }
 
     if (flags & AUDIO_OUTPUT_FLAG_DIRECT) {
         if (audio_is_linear_pcm(format)) {
@@ -514,13 +530,11 @@ status_t AudioTrack::set(
         mOffloadInfo = NULL;
     }
 
-#ifdef ENABLE_AV_ENHANCEMENTS
     if (audio_is_offload_pcm(mFormat) &&
          offloadInfo && offloadInfo->use_small_bufs) {
         mUseSmallBuf = true;
         ALOGI("Using small buffers for PCM offload");
     }
-#endif
 
     mVolume[AUDIO_INTERLEAVE_LEFT] = 1.0f;
     mVolume[AUDIO_INTERLEAVE_RIGHT] = 1.0f;
@@ -628,7 +642,7 @@ status_t AudioTrack::set(
     mSequence = 1;
     mObservedSequence = mSequence;
     mInUnderrun = false;
-    ALOGV("AudioTrack::set : Exit");
+    ALOGE("AudioTrack::set : Exit");
     return NO_ERROR;
 }
 // -------------------------------------------------------------------------
@@ -766,7 +780,7 @@ void AudioTrack::flush()
 {
 #ifdef QCOM_DIRECTTRACK
     if(mDirectTrack != NULL) {
-        ALOGV("mDirectTrack flush");
+        ALOGE("mdirect track flush");
         mDirectTrack->flush();
         return ;
     }
@@ -1182,6 +1196,10 @@ status_t AudioTrack::createTrack_l()
         return NO_INIT;
     }
 
+    status_t status;
+    audio_io_handle_t output = AUDIO_IO_HANDLE_NONE;
+    audio_stream_type_t streamType = mStreamType;
+    audio_attributes_t *attr = (mStreamType == AUDIO_STREAM_DEFAULT) ? &mAttributes : NULL;
     mCanOffloadPcmTrack = false;
     mIsPcmTrackOffloaded = false;
     mPcmTrackOffloadInfo = AUDIO_INFO_INITIALIZER;
@@ -1190,35 +1208,43 @@ status_t AudioTrack::createTrack_l()
     mCanOffloadPcmTrack = canOffloadTrack(mStreamType, mFormat, mChannelMask, mFlags,
                               mTransfer, &mAttributes, mOffloadInfo);
 
-    audio_io_handle_t output = AUDIO_IO_HANDLE_NONE;
 
     if(mCanOffloadPcmTrack) {
         ALOGV("TrackOffload: Tying to create PCM Offload track");
-        output = AudioSystem::getOutputForAttr(&mAttributes, mSampleRate, mPcmTrackOffloadInfo.format,
-            mChannelMask, (audio_output_flags_t) (mFlags | AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD),
-            &mPcmTrackOffloadInfo);
-        if (output != AUDIO_IO_HANDLE_NONE) {
+        audio_output_flags_t flags = (audio_output_flags_t) (mFlags & ~AUDIO_OUTPUT_FLAG_DEEP_BUFFER);
+        flags = (audio_output_flags_t) (flags | AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD);
+        status = AudioSystem::getOutputForAttr(attr, &output,
+                                                (audio_session_t) mSessionId, &streamType,
+                                                mSampleRate, mPcmTrackOffloadInfo.format,
+                                                mChannelMask, (audio_output_flags_t) (flags),
+                                                &mPcmTrackOffloadInfo);
+        if (status == NO_ERROR && output != AUDIO_IO_HANDLE_NONE) {
             //got output
             ALOGV("TrackOffload: Going through PCM Offload Track");
             mIsPcmTrackOffloaded = true;
+            mFlags = flags;
             mFrameSize = sizeof(uint8_t);
             mFrameSizeAF = sizeof(uint8_t);
             mUseSmallBuf = true;
         }
     }
 
-    if (output == AUDIO_IO_HANDLE_NONE) {
-        //retry retrieving output
-        output = AudioSystem::getOutputForAttr(&mAttributes, mSampleRate, mFormat,
-            mChannelMask, mFlags, mOffloadInfo);
+    //retry retrieving output
+    if (status != NO_ERROR || output == AUDIO_IO_HANDLE_NONE) {
+        status = AudioSystem::getOutputForAttr(attr, &output,
+                                                        (audio_session_t)mSessionId, &streamType,
+                                                        mSampleRate, mFormat, mChannelMask,
+                                                        mFlags, mOffloadInfo);
+
     }
 
-    if (output == AUDIO_IO_HANDLE_NONE) {
-        ALOGE("Could not get audio output for stream type %d, usage %d, sample rate %u, format %#x,"
-              " channel mask %#x, flags %#x",
-              streamType, mAttributes.usage, mSampleRate, mFormat, mChannelMask, mFlags);
-        return BAD_VALUE;
+    if (status != NO_ERROR || output == AUDIO_IO_HANDLE_NONE) {
+            ALOGE("Could not get audio output for stream type %d, usage %d, sample rate %u, format %#x,"
+                  " channel mask %#x, flags %#x",
+                  streamType, mAttributes.usage, mSampleRate, mFormat, mChannelMask, mFlags);
+            return BAD_VALUE;
     }
+
     {
     // Now that we have a reference to an I/O handle and have not yet handed it off to AudioFlinger,
     // we must release it ourselves if anything goes wrong.
@@ -1388,7 +1414,7 @@ status_t AudioTrack::createTrack_l()
                     AUDIO_FORMAT_PCM_16_BIT : mFormat;
         ALOGV("Create normal PCM 0x%x Track", format);
     }
-    sp<IAudioTrack> track = audioFlinger->createTrack(mStreamType,
+    sp<IAudioTrack> track = audioFlinger->createTrack(streamType,
                                                       mSampleRate,
                                                       format,
                                                       mChannelMask,
@@ -2427,146 +2453,6 @@ uint32_t AudioTrack::getUnderrunFrames() const
     return mProxy->getUnderrunFrames();
 }
 
-void AudioTrack::setAttributesFromStreamType(audio_stream_type_t streamType) {
-    mAttributes.flags = 0x0;
-
-    switch(streamType) {
-    case AUDIO_STREAM_DEFAULT:
-    case AUDIO_STREAM_MUSIC:
-#ifdef QCOM_HARDWARE
-    case AUDIO_STREAM_INCALL_MUSIC:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_MUSIC;
-        mAttributes.usage = AUDIO_USAGE_MEDIA;
-#endif
-        break;
-    case AUDIO_STREAM_VOICE_CALL:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SPEECH;
-        mAttributes.usage = AUDIO_USAGE_VOICE_COMMUNICATION;
-        break;
-    case AUDIO_STREAM_ENFORCED_AUDIBLE:
-        mAttributes.flags  |= AUDIO_FLAG_AUDIBILITY_ENFORCED;
-        // intended fall through, attributes in common with STREAM_SYSTEM
-    case AUDIO_STREAM_SYSTEM:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SONIFICATION;
-        mAttributes.usage = AUDIO_USAGE_ASSISTANCE_SONIFICATION;
-        break;
-    case AUDIO_STREAM_RING:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SONIFICATION;
-        mAttributes.usage = AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE;
-        break;
-    case AUDIO_STREAM_ALARM:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SONIFICATION;
-        mAttributes.usage = AUDIO_USAGE_ALARM;
-        break;
-    case AUDIO_STREAM_NOTIFICATION:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SONIFICATION;
-        mAttributes.usage = AUDIO_USAGE_NOTIFICATION;
-        break;
-    case AUDIO_STREAM_BLUETOOTH_SCO:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SPEECH;
-        mAttributes.usage = AUDIO_USAGE_VOICE_COMMUNICATION;
-        mAttributes.flags |= AUDIO_FLAG_SCO;
-        break;
-    case AUDIO_STREAM_DTMF:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SONIFICATION;
-        mAttributes.usage = AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING;
-        break;
-    case AUDIO_STREAM_TTS:
-        mAttributes.content_type = AUDIO_CONTENT_TYPE_SPEECH;
-        mAttributes.usage = AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY;
-        break;
-    default:
-        ALOGE("invalid stream type %d when converting to attributes", streamType);
-    }
-}
-
-void AudioTrack::setStreamTypeFromAttributes(audio_attributes_t& aa) {
-    // flags to stream type mapping
-    if ((aa.flags & AUDIO_FLAG_AUDIBILITY_ENFORCED) == AUDIO_FLAG_AUDIBILITY_ENFORCED) {
-        mStreamType = AUDIO_STREAM_ENFORCED_AUDIBLE;
-        return;
-    }
-    if ((aa.flags & AUDIO_FLAG_SCO) == AUDIO_FLAG_SCO) {
-        mStreamType = AUDIO_STREAM_BLUETOOTH_SCO;
-        return;
-    }
-
-    // usage to stream type mapping
-    switch (aa.usage) {
-    case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
-        // TODO once AudioPolicyManager fully supports audio_attributes_t,
-        //   remove stream change based on phone state
-        if (AudioSystem::getPhoneState() == AUDIO_MODE_RINGTONE) {
-            mStreamType = AUDIO_STREAM_RING;
-            break;
-        }
-        /// FALL THROUGH
-    case AUDIO_USAGE_MEDIA:
-    case AUDIO_USAGE_GAME:
-    case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
-        mStreamType = AUDIO_STREAM_MUSIC;
-        return;
-    case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
-        mStreamType = AUDIO_STREAM_SYSTEM;
-        return;
-    case AUDIO_USAGE_VOICE_COMMUNICATION:
-        mStreamType = AUDIO_STREAM_VOICE_CALL;
-        return;
-
-    case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
-        mStreamType = AUDIO_STREAM_DTMF;
-        return;
-
-    case AUDIO_USAGE_ALARM:
-        mStreamType = AUDIO_STREAM_ALARM;
-        return;
-    case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
-        mStreamType = AUDIO_STREAM_RING;
-        return;
-
-    case AUDIO_USAGE_NOTIFICATION:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
-    case AUDIO_USAGE_NOTIFICATION_EVENT:
-        mStreamType = AUDIO_STREAM_NOTIFICATION;
-        return;
-
-    case AUDIO_USAGE_UNKNOWN:
-    default:
-        mStreamType = AUDIO_STREAM_MUSIC;
-    }
-}
-
-bool AudioTrack::isValidAttributes(const audio_attributes_t *paa) {
-    // has flags that map to a strategy?
-    if ((paa->flags & (AUDIO_FLAG_AUDIBILITY_ENFORCED | AUDIO_FLAG_SCO)) != 0) {
-        return true;
-    }
-
-    // has known usage?
-    switch (paa->usage) {
-    case AUDIO_USAGE_UNKNOWN:
-    case AUDIO_USAGE_MEDIA:
-    case AUDIO_USAGE_VOICE_COMMUNICATION:
-    case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
-    case AUDIO_USAGE_ALARM:
-    case AUDIO_USAGE_NOTIFICATION:
-    case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
-    case AUDIO_USAGE_NOTIFICATION_EVENT:
-    case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
-    case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
-    case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
-    case AUDIO_USAGE_GAME:
-        break;
-    default:
-        return false;
-    }
-    return true;
-}
 // =========================================================================
 
 void AudioTrack::DeathNotifier::binderDied(const wp<IBinder>& who __unused)
@@ -2577,6 +2463,37 @@ void AudioTrack::DeathNotifier::binderDied(const wp<IBinder>& who __unused)
         audioTrack->mProxy->binderDied();
     }
 }
+
+#ifdef QCOM_DIRECTTRACK
+void AudioTrack::notify(int msg) {
+    if (msg == EVENT_UNDERRUN) {
+        ALOGV("Posting event underrun to Audio Sink.");
+        mCbf(EVENT_UNDERRUN, mUserData, 0);
+    }
+    if (msg == EVENT_HW_FAIL) {
+        ALOGV("Posting event HW fail to Audio Sink.");
+        mCbf(EVENT_HW_FAIL, mUserData, 0);
+    }
+}
+
+status_t AudioTrack::getTimeStamp(uint64_t *tstamp) {
+    if (mDirectTrack != NULL) {
+        *tstamp = mDirectTrack->getTimeStamp();
+        ALOGE("Timestamp %lld ", *tstamp);
+    }
+    return NO_ERROR;
+}
+
+void AudioTrack::DirectClient::notify(int msg) {
+    sp<AudioTrack> track = mAudioTrack.promote();
+    if (track == 0) {
+        ALOGE("AudioTrack dead?");
+        return;
+    }
+
+    return track->notify(msg);
+}
+#endif
 
 #ifdef QCOM_DIRECTTRACK
 void AudioTrack::notify(int msg) {

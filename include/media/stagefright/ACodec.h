@@ -141,8 +141,7 @@ private:
     enum {
         kFlagIsSecure                                 = 1,
         kFlagPushBlankBuffersToNativeWindowOnShutdown = 2,
-        // protection against screen capture of non-secure drm content
-        kFlagIsContentDrmProtected                    = 3,
+        kFlagIsGrallocUsageProtected                  = 4,
     };
 
     struct BufferInfo {
@@ -234,6 +233,8 @@ private:
 
     bool mTunneled;
 
+    bool mIsVideoRenderingDisabled;
+
     status_t setCyclicIntraMacroblockRefresh(const sp<AMessage> &msg, int32_t mode);
     status_t allocateBuffersOnPort(OMX_U32 portIndex);
     status_t freeBuffersOnPort(OMX_U32 portIndex);
@@ -299,7 +300,7 @@ private:
 
     status_t setupAC3Codec(bool encoder, int32_t numChannels, int32_t sampleRate, int32_t bitsPerSample);
 
-    status_t setupEAC3Codec(bool encoder, int32_t numChannels, int32_t sampleRate);
+    status_t setupEAC3Codec(bool encoder, int32_t numChannels, int32_t sampleRate, int32_t bitsPerSample);
 
     status_t selectAudioPortFormat(
             OMX_U32 portIndex, OMX_AUDIO_CODINGTYPE desiredFormat);

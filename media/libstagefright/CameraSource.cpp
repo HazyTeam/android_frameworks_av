@@ -789,7 +789,6 @@ status_t CameraSource::reset() {
         if (mNumGlitches > 0) {
             ALOGW("%d long delays between neighboring video frames", mNumGlitches);
         }
-
         CHECK_EQ(mNumFramesReceived, mNumFramesEncoded + mNumFramesDropped);
     }
 

@@ -32,8 +32,6 @@
 #include <media/stagefright/Utils.h>
 
 
-#include "ExtendedUtils.h"
-
 namespace android {
 
 NuPlayer::HTTPLiveSource::HTTPLiveSource(

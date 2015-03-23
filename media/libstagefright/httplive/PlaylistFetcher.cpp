@@ -969,7 +969,7 @@ void PlaylistFetcher::onDownloadNext() {
     ALOGV("fetching segment %d from (%d .. %d)",
           mSeqNumber, firstSeqNumberInPlaylist, lastSeqNumberInPlaylist);
 
-    ALOGV("fetching '%s'", mSegmentURI.c_str());
+    ALOGI("fetching '%s'", uri.c_str());
 
     // decrypt a junk buffer to prefetch key; since a session uses only one http connection,
     // this avoids interleaved connections to the key and segment file.

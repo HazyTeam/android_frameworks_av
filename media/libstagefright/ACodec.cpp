@@ -12,6 +12,43 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * This file was modified by Dolby Laboratories, Inc. The portions of the
+ * code that are surrounded by "DOLBY..." are copyrighted and
+ * licensed separately, as follows:
+ *
+ *  (C) 2011-2014 Dolby Laboratories, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ **
+ ** This file was modified by DTS, Inc. The portions of the
+ ** code that are surrounded by "DTS..." are copyrighted and
+ ** licensed separately, as follows:
+ **
+ **  (C) 2014 DTS, Inc.
+ **
+ ** Licensed under the Apache License, Version 2.0 (the "License");
+ ** you may not use this file except in compliance with the License.
+ ** You may obtain a copy of the License at
+ **
+ **    http://www.apache.org/licenses/LICENSE-2.0
+ **
+ ** Unless required by applicable law or agreed to in writing, software
+ ** distributed under the License is distributed on an "AS IS" BASIS,
+ ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ ** See the License for the specific language governing permissions and
+ ** limitations under the License
  */
 
 //#define LOG_NDEBUG 0
@@ -61,6 +98,10 @@
 #ifdef ENABLE_AV_ENHANCEMENTS
 #include <QCMediaDefs.h>
 #include <ExtendedUtils.h>
+#endif
+#ifdef DTS_CODEC_M_
+#include "include/DTSUtils.h"
+#include "include/OMX_Audio_DTS.h"
 #endif
 
 namespace android {
@@ -435,7 +476,8 @@ ACodec::ACodec()
       mTimePerFrameUs(-1ll),
       mTimePerCaptureUs(-1ll),
       mCreateInputBuffersSuspended(false),
-      mTunneled(false) {
+      mTunneled(false),
+      mIsVideoRenderingDisabled(false) {
     mUninitializedState = new UninitializedState(this);
     mLoadedState = new LoadedState(this);
     mLoadedToIdleState = new LoadedToIdleState(this);
@@ -706,7 +748,7 @@ status_t ACodec::configureOutputBuffersFromNativeWindow(
     }
     int omxUsage = usage;
 
-    if (mFlags & (kFlagIsSecure | kFlagIsContentDrmProtected)) {
+    if (mFlags & kFlagIsGrallocUsageProtected) {
         usage |= GRALLOC_USAGE_PROTECTED;
     }
 
@@ -965,7 +1007,8 @@ void ACodec::setNativeWindowColorFormat(OMX_COLOR_FORMATTYPE &eNativeColorFormat
 {
     // In case of Samsung decoders, we set proper native color format for the Native Window
     if (!strcasecmp(mComponentName.c_str(), "OMX.SEC.AVC.Decoder")
-        || !strcasecmp(mComponentName.c_str(), "OMX.SEC.FP.AVC.Decoder")) {
+        || !strcasecmp(mComponentName.c_str(), "OMX.SEC.FP.AVC.Decoder")
+        || !strcasecmp(mComponentName.c_str(), "OMX.Exynos.AVC.Decoder")) {
         switch (eNativeColorFormat) {
             case OMX_COLOR_FormatYUV420SemiPlanar:
                 eNativeColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_SP;
@@ -1173,14 +1216,24 @@ status_t ACodec::setComponentRole(
             "audio_decoder.g711mlaw", "audio_encoder.g711mlaw" },
         { MEDIA_MIMETYPE_AUDIO_G711_ALAW,
             "audio_decoder.g711alaw", "audio_encoder.g711alaw" },
+#ifdef ENABLE_AV_ENHANCEMENTS
+#ifdef DOLBY_UDC
+        { MEDIA_MIMETYPE_AUDIO_EAC3,
+            "audio_decoder.ec3", NULL },
+        { MEDIA_MIMETYPE_AUDIO_EAC3_JOC,
+            "audio_decoder.ec3_joc", NULL },
+#endif // DOLBY_END
+#endif
         { MEDIA_MIMETYPE_VIDEO_AVC,
             "video_decoder.avc", "video_encoder.avc" },
         { MEDIA_MIMETYPE_VIDEO_HEVC,
             "video_decoder.hevc", "video_encoder.hevc" },
         { MEDIA_MIMETYPE_VIDEO_MPEG4,
             "video_decoder.mpeg4", "video_encoder.mpeg4" },
+#ifdef ENABLE_AV_ENHANCEMENTS			
         { MEDIA_MIMETYPE_VIDEO_MPEG4_DP,
             "video_decoder.mpeg4", NULL },
+#endif			
         { MEDIA_MIMETYPE_VIDEO_H263,
             "video_decoder.h263", "video_encoder.h263" },
         { MEDIA_MIMETYPE_VIDEO_VP8,
@@ -1189,6 +1242,7 @@ status_t ACodec::setComponentRole(
             "video_decoder.vp9", "video_encoder.vp9" },
         { MEDIA_MIMETYPE_AUDIO_RAW,
             "audio_decoder.raw", "audio_encoder.raw" },
+#ifdef ENABLE_AV_ENHANCEMENTS			
 #ifdef QTI_FLAC_DECODER
         { MEDIA_MIMETYPE_AUDIO_FLAC,
             "audio_decoder.raw", NULL },
@@ -1196,12 +1250,19 @@ status_t ACodec::setComponentRole(
         { MEDIA_MIMETYPE_AUDIO_FLAC,
             "audio_decoder.flac", "audio_encoder.flac" },
 #endif
+#endif
         { MEDIA_MIMETYPE_AUDIO_MSGSM,
             "audio_decoder.gsm", "audio_encoder.gsm" },
         { MEDIA_MIMETYPE_VIDEO_MPEG2,
             "video_decoder.mpeg2", "video_encoder.mpeg2" },
         { MEDIA_MIMETYPE_AUDIO_AC3,
             "audio_decoder.ac3", "audio_encoder.ac3" },
+#ifdef ENABLE_AV_ENHANCEMENTS			
+#ifdef DTS_CODEC_M_
+        { MEDIA_MIMETYPE_AUDIO_DTS,
+            "audio_decoder.dts", "audio_encoder.dts" },
+#endif
+#endif
         { MEDIA_MIMETYPE_AUDIO_EAC3,
             "audio_decoder.eac3", "audio_encoder.eac3" },
     };
@@ -1447,6 +1508,15 @@ status_t ACodec::configureCodec(
             ALOGV("Configuring CPU controlled video playback.");
             mTunneled = false;
 
+            // Explicity reset the sideband handle of the window for
+            // non-tunneled video in case the window was previously used
+            // for a tunneled video playback.
+            err = native_window_set_sideband_stream(nativeWindow.get(), NULL);
+            if (err != OK) {
+                ALOGE("set_sideband_stream(NULL) failed! (err %d).", err);
+                return err;
+            }
+
             bool bAdaptivePlaybackMode = false;
             int32_t preferAdaptive = 0;
             if (msg->findInt32("prefer-adaptive-playback", &preferAdaptive)
@@ -1546,7 +1616,7 @@ status_t ACodec::configureCodec(
         int32_t preventScreenCapture = 0;
         if (msg->findInt32("prevent-screen-capture", &preventScreenCapture)
                 && preventScreenCapture == 1) {
-            mFlags |= kFlagIsContentDrmProtected;
+            mFlags |= kFlagIsGrallocUsageProtected;
         }
     }
 
@@ -1561,13 +1631,75 @@ status_t ACodec::configureCodec(
         if (encoder) {
             err = setupVideoEncoder(mime, msg);
         } else {
-            err = setupVideoDecoder(mime, msg);
+            err = setupVideoDecoder(mime, msg, haveNativeWindow);
 #ifdef ENABLE_AV_ENHANCEMENTS
             if (err == OK) {
                 const char* componentName = mComponentName.c_str();
                 ExtendedCodec::configureVideoDecoder(msg, mime, mOMX, 0, mNode, componentName);
             }
 #endif
+        }
+
+        if (err != OK) {
+            return err;
+        }
+
+        if (haveNativeWindow) {
+            sp<NativeWindowWrapper> nativeWindow(
+                    static_cast<NativeWindowWrapper *>(obj.get()));
+            CHECK(nativeWindow != NULL);
+            mNativeWindow = nativeWindow->getNativeWindow();
+
+            native_window_set_scaling_mode(
+                    mNativeWindow.get(), NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
+        }
+
+        // initialize native window now to get actual output format
+        // TODO: this is needed for some encoders even though they don't use native window
+        CHECK_EQ((status_t)OK, initNativeWindow());
+
+        // fallback for devices that do not handle flex-YUV for native buffers
+        if (haveNativeWindow) {
+            int32_t requestedColorFormat = OMX_COLOR_FormatUnused;
+            if (msg->findInt32("color-format", &requestedColorFormat) &&
+                    requestedColorFormat == OMX_COLOR_FormatYUV420Flexible) {
+                CHECK_EQ(getPortFormat(kPortIndexOutput, outputFormat), (status_t)OK);
+                int32_t colorFormat = OMX_COLOR_FormatUnused;
+                OMX_U32 flexibleEquivalent = OMX_COLOR_FormatUnused;
+                CHECK(outputFormat->findInt32("color-format", &colorFormat));
+                ALOGD("[%s] Requested output format %#x and got %#x.",
+                        mComponentName.c_str(), requestedColorFormat, colorFormat);
+                if (!isFlexibleColorFormat(
+                                mOMX, mNode, colorFormat, haveNativeWindow, &flexibleEquivalent)
+                        || flexibleEquivalent != (OMX_U32)requestedColorFormat) {
+                    // device did not handle flex-YUV request for native window, fall back
+                    // to SW renderer
+                    ALOGI("[%s] Falling back to software renderer", mComponentName.c_str());
+                    mNativeWindow.clear();
+                    haveNativeWindow = false;
+                    usingSwRenderer = true;
+                    if (mStoreMetaDataInOutputBuffers) {
+                        err = mOMX->storeMetaDataInBuffers(mNode, kPortIndexOutput, OMX_FALSE);
+                        mStoreMetaDataInOutputBuffers = false;
+                        // TODO: implement adaptive-playback support for bytebuffer mode.
+                        // This is done by SW codecs, but most HW codecs don't support it.
+                        inputFormat->setInt32("adaptive-playback", false);
+                    }
+                    if (err == OK) {
+                        err = mOMX->enableGraphicBuffers(mNode, kPortIndexOutput, OMX_FALSE);
+                    }
+                    if (mFlags & kFlagIsGrallocUsageProtected) {
+                        // fallback is not supported for protected playback
+                        err = PERMISSION_DENIED;
+                    } else if (err == OK) {
+                        err = setupVideoDecoder(mime, msg, false);
+                    }
+                }
+            }
+        }
+
+        if (usingSwRenderer) {
+            outputFormat->setInt32("using-sw-renderer", 1);
         }
     } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG)) {
         int32_t numChannels, sampleRate, bitsPerSample;
@@ -1585,6 +1717,21 @@ status_t ACodec::configureCodec(
                     sampleRate,
                     numChannels, bitsPerSample);
         }
+#ifdef DTS_CODEC_M_
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_DTS)) {
+        ALOGV(" (DTS) mime == MEDIA_MIMETYPE_AUDIO_DTS");
+        int32_t numChannels, sampleRate;
+        if (!msg->findInt32("channel-count", &numChannels)
+                || !msg->findInt32("sample-rate", &sampleRate)) {
+            ALOGE("missing channel count or sample rate for DTS decoder");
+            err = INVALID_OPERATION;
+        } else {
+            err = DTSUtils::setupDecoder(mOMX, mNode, sampleRate);
+        }
+        if (err != OK) {
+            return err;
+        }
+#endif
     } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC)) {
         int32_t numChannels, sampleRate;
         if (!msg->findInt32("channel-count", &numChannels)
@@ -1707,6 +1854,17 @@ status_t ACodec::configureCodec(
             msg->findInt32("bits-per-sample", &bitsPerSample);
             err = setupAC3Codec(encoder, numChannels, sampleRate, bitsPerSample);
         }
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_EAC3)) {
+        int32_t numChannels;
+        int32_t sampleRate;
+        if (!msg->findInt32("channel-count", &numChannels)
+                || !msg->findInt32("sample-rate", &sampleRate)) {
+            err = INVALID_OPERATION;
+        } else {
+            int32_t bitsPerSample = 16;
+            msg->findInt32("bits-per-sample", &bitsPerSample);
+            err = setupEAC3Codec(encoder, numChannels, sampleRate, bitsPerSample);
+        }
     } else {
         if (encoder) {
             int32_t numChannels, sampleRate;
@@ -1727,15 +1885,6 @@ status_t ACodec::configureCodec(
         }
         if (err != OK) {
             return err;
-        }
-    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_EAC3)) {
-        int32_t numChannels;
-        int32_t sampleRate;
-        if (!msg->findInt32("channel-count", &numChannels)
-                || !msg->findInt32("sample-rate", &sampleRate)) {
-            err = INVALID_OPERATION;
-        } else {
-            err = setupEAC3Codec(encoder, numChannels, sampleRate);
         }
     }
 
@@ -2023,9 +2172,9 @@ status_t ACodec::setupAC3Codec(
 }
 
 status_t ACodec::setupEAC3Codec(
-        bool encoder, int32_t numChannels, int32_t sampleRate) {
+        bool encoder, int32_t numChannels, int32_t sampleRate, int32_t bitsPerSample) {
     status_t err = setupRawAudioFormat(
-            encoder ? kPortIndexInput : kPortIndexOutput, sampleRate, numChannels);
+            encoder ? kPortIndexInput : kPortIndexOutput, sampleRate, numChannels, bitsPerSample);
 
     if (err != OK) {
         return err;
@@ -3933,7 +4082,23 @@ status_t ACodec::getPortFormat(OMX_U32 portIndex, sp<AMessage> &notify) {
                     notify->setInt32("sample-rate", params.nSamplingRate);
                     break;
                 }
+#ifdef DTS_CODEC_M_
+                case OMX_AUDIO_CodingDTSHD:
+                {
+                    OMX_AUDIO_PARAM_DTSDECTYPE params;
+                    InitOMXParams(&params);
+                    params.nPortIndex = portIndex;
 
+                    CHECK_EQ((status_t)OK, mOMX->getParameter(
+                            mNode,
+                            (OMX_INDEXTYPE)OMX_IndexParamAudioDTSDec,
+                            &params,
+                            sizeof(params)));
+
+                    notify->setString("mime", MEDIA_MIMETYPE_AUDIO_DTS);
+                    break;
+                }
+#endif
                 case OMX_AUDIO_CodingGSMFR:
                 {
                     OMX_AUDIO_PARAM_MP3TYPE params;
@@ -4808,7 +4973,8 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
     int32_t render;
     if (mCodec->mNativeWindow != NULL
             && msg->findInt32("render", &render) && render != 0
-            && info->mData != NULL && info->mData->size() != 0) {
+            && info->mData != NULL && info->mData->size() != 0
+            && !mCodec->mIsVideoRenderingDisabled) {
         ATRACE_NAME("render");
         // The client wants this buffer to be rendered.
 
@@ -4847,8 +5013,9 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
             info->mStatus = BufferInfo::OWNED_BY_US;
         }
     } else {
-        if (mCodec->mNativeWindow != NULL &&
-            (info->mData == NULL || info->mData->size() != 0)) {
+        if (mCodec->mNativeWindow != NULL
+            && msg->findInt32("render", &render) && render == 0
+            && (info->mData == NULL || info->mData->size() != 0)) {
             ATRACE_NAME("frame-drop");
         }
         info->mStatus = BufferInfo::OWNED_BY_US;
@@ -5049,7 +5216,7 @@ bool ACodec::UninitializedState::onAllocateComponent(const sp<AMessage> &msg) {
     // MediaCodecSource does not pass the output format details when calling
     // kInit leading to msg passed not having enough details
     if (!strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_AAC)
-        && ExtendedUtils::UseQCHWAACEncoder() && encoder) {
+        && ExtendedUtils::UseQCHWAACEncoder()) {
         //use hw aac encoder
         ALOGD("use QCOM HW AAC encoder");
         OMXCodec::findMatchingCodecs(
@@ -5058,25 +5225,16 @@ bool ACodec::UninitializedState::onAllocateComponent(const sp<AMessage> &msg) {
                 "OMX.qcom.audio.encoder.aac",  // OMX.qcom.audio.encoder.aac
                 0,     // flags
                 &matchingCodecs);
+    } else
+#endif
 #ifdef QTI_FLAC_DECODER
-    } else if (!strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_FLAC) && !encoder) {
+    if (!strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_FLAC) && !encoder) {
         //use google's raw decoder
         OMXCodec::findMatchingCodecs(
                 MEDIA_MIMETYPE_AUDIO_RAW,
                 encoder, //createEncoder
                 "OMX.google.raw.decoder",
                 0, //flags
-                &matchingCodecs);
-#endif
-    } else if (!strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_AAC)
-        && ExtendedUtils::UseQCHWAACDecoder(mime.c_str()) && !encoder) {
-        //use hw aac decoder
-        ALOGD("use QCOM HW AAC decoder");
-        OMXCodec::findMatchingCodecs(
-                mime.c_str(),
-                encoder, // createEncoder
-                "OMX.qcom.audio.decoder.multiaac",  // OMX.qcom.audio.decoder.multiaac
-                0,     // flags
                 &matchingCodecs);
     } else
 #endif
@@ -5288,6 +5446,7 @@ bool ACodec::LoadedState::onConfigureComponent(
         native_window_set_scaling_mode(
                 mCodec->mNativeWindow.get(),
                 NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
+        mCodec->mIsVideoRenderingDisabled = ExtendedUtils::ShellProp::isVideoRenderingDisabled();
     }
     CHECK_EQ((status_t)OK, mCodec->initNativeWindow());
 

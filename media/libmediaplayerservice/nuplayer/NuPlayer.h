@@ -78,6 +78,7 @@ struct NuPlayer : public AHandler {
     void getStats(int64_t *mNumFramesTotal, int64_t *mNumFramesDropped);
 
     sp<MetaData> getFileMeta();
+    int64_t getServerTimeoutUs();
 
     int64_t getServerTimeoutUs();
 
@@ -148,10 +149,12 @@ private:
     sp<MediaPlayerBase::AudioSink> mAudioSink;
     sp<DecoderBase> mVideoDecoder;
     bool mOffloadAudio;
+
     bool mOffloadDecodedPCM;
     bool mSwitchingFromPcmOffload;
     bool mIsStreaming;
-    sp<Decoder> mAudioDecoder;
+    sp<DecoderBase> mAudioDecoder;
+
     sp<CCDecoder> mCCDecoder;
     sp<Renderer> mRenderer;
     sp<ALooper> mRendererLooper;

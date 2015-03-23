@@ -1599,7 +1599,6 @@ void LiveSession::onChangeConfiguration3(const sp<AMessage> &msg) {
         sp<PlaylistFetcher> fetcher = addFetcher(uri.c_str());
         CHECK(fetcher != NULL);
 
-        int64_t latestSeq = -1;
         int64_t startTimeUs = -1;
         int64_t segmentStartTimeUs = -1ll;
         int32_t discontinuitySeq = -1;

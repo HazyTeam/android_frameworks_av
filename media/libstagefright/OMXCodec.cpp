@@ -11,6 +11,43 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * This file was modified by Dolby Laboratories, Inc. The portions of the
+ * code that are surrounded by "DOLBY..." are copyrighted and
+ * licensed separately, as follows:
+ *
+ *  (C) 2011-2014 Dolby Laboratories, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ **
+ ** This file was modified by DTS, Inc. The portions of the
+ ** code that are surrounded by "DTS..." are copyrighted and
+ ** licensed separately, as follows:
+ **
+ **  (C) 2014 DTS, Inc.
+ **
+ ** Licensed under the Apache License, Version 2.0 (the "License");
+ ** you may not use this file except in compliance with the License.
+ ** You may obtain a copy of the License at
+ **
+ **    http://www.apache.org/licenses/LICENSE-2.0
+ **
+ ** Unless required by applicable law or agreed to in writing, software
+ ** distributed under the License is distributed on an "AS IS" BASIS,
+ ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ ** See the License for the specific language governing permissions and
+ ** limitations under the License
  */
 
 #include <inttypes.h>
@@ -57,6 +94,12 @@
 #include "include/ExtendedUtils.h"
 
 #include "include/avc_utils.h"
+#ifdef DOLBY_UDC
+#include "ds_config.h"
+#endif // DOLBY_END
+
+#include <media/stagefright/ExtendedCodec.h>
+#include <media/stagefright/FFMPEGSoftCodec.h>
 
 #include <media/stagefright/ExtendedCodec.h>
 #include <media/stagefright/FFMPEGSoftCodec.h>
@@ -65,6 +108,10 @@
 #include <QCMediaDefs.h>
 #include <QCMetaData.h>
 #include <QOMX_AudioExtensions.h>
+#endif
+#ifdef DTS_CODEC_M_
+#include "include/DTSUtils.h"
+#include "include/OMX_Audio_DTS.h"
 #endif
 
 #ifdef QTI_FLAC_DECODER
@@ -87,6 +134,18 @@ static const int OMX_SEC_COLOR_FormatNV12TPhysicalAddress = 0x7F000001;
 static const int OMX_SEC_COLOR_FormatNV12LPhysicalAddress = 0x7F000002;
 static const int OMX_SEC_COLOR_FormatNV12LVirtualAddress = 0x7F000003;
 static const int OMX_SEC_COLOR_FormatNV12Tiled = 0x7FC00002;
+static int calc_plane(int width, int height)
+{
+    int mbX, mbY;
+
+    mbX = (width + 15)/16;
+    mbY = (height + 15)/16;
+
+    /* Alignment for interlaced processing */
+    mbY = (mbY + 1) / 2 * 2;
+
+    return (mbX * 16) * (mbY * 16);
+}
 #endif // USE_SAMSUNG_COLORFORMAT
 
 // Treat time out as an error if we have not received any output
@@ -208,9 +267,13 @@ static void InitOMXParams(T *params) {
 }
 
 static bool IsSoftwareCodec(const char *componentName) {
+#ifdef DOLBY_UDC
+    if (!strncmp("OMX.dolby.", componentName, 10)) {
+        return true;
+    }
+#endif // DOLBY_END
     if (!strncmp("OMX.google.", componentName, 11)
-        || !strncmp("OMX.ffmpeg.", componentName, 11)
-        || !strncmp("OMX.PV.", componentName, 7)) {
+        || !strncmp("OMX.ffmpeg.", componentName, 11)) {
         return true;
     }
 
@@ -271,7 +334,7 @@ void OMXCodec::findMatchingCodecs(
     size_t index = 0;
 
 #ifdef ENABLE_AV_ENHANCEMENTS
-    //Check if application specially reuqested for aac hardware encoder/decoder
+    //Check if application specially reuqested for  aac hardware encoder
     //This is not a part of  mediacodec list
     if (matchComponentName &&
             !strncmp("OMX.qcom.audio.encoder.aac", matchComponentName, 26)) {
@@ -293,17 +356,6 @@ void OMXCodec::findMatchingCodecs(
             return;
     }
 #endif
-
-    if (matchComponentName &&
-            !strncmp("OMX.qcom.audio.decoder.multiaac", matchComponentName, 31)) {
-        matchingCodecs->add();
-
-        CodecNameAndQuirks *entry = &matchingCodecs->editItemAt(index);
-        entry->mName = String8("OMX.qcom.audio.decoder.multiaac");
-        entry->mQuirks |= kRequiresAllocateBufferOnInputPorts;
-        entry->mQuirks |= kRequiresAllocateBufferOnOutputPorts;
-        return;
-    }
 #endif
 
     for (;;) {
@@ -372,6 +424,15 @@ uint32_t OMXCodec::getComponentQuirks(
     quirks |= ExtendedCodec::getComponentQuirks(info);
 #endif
 
+#ifdef DOLBY_UDC
+    if (info->hasQuirk("needs-flush-before-disable")) {
+        quirks |= kNeedsFlushBeforeDisable;
+    }
+    if (info->hasQuirk("requires-flush-complete-emulation")) {
+        quirks |= kRequiresFlushCompleteEmulation;
+    }
+#endif // DOLBY_END
+
     return quirks;
 }
 
@@ -396,17 +457,6 @@ bool OMXCodec::findCodecQuirks(const char *componentName, uint32_t *quirks) {
     if (index < 0) {
         return false;
     }
-
-#ifdef ENABLE_AV_ENHANCEMENTS
-    //Check for aac hardware decoder
-    //This is not a part of  mediacodec list
-    if (componentName &&
-            !strncmp("OMX.qcom.audio.decoder.multiaac", componentName, 31)) {
-        *quirks |= kRequiresAllocateBufferOnInputPorts;
-        *quirks |= kRequiresAllocateBufferOnOutputPorts;
-        return true;
-    }
-#endif
 
     const sp<MediaCodecInfo> info = list->getCodecInfo(index);
     CHECK(info != NULL);
@@ -444,14 +494,8 @@ sp<MediaSource> OMXCodec::Create(
             "FLACDecoder", flags, &matchingCodecs);
     } else
 #endif
-    if (!strncmp(mime, MEDIA_MIMETYPE_AUDIO_AAC, 15) &&
-            ExtendedUtils::UseQCHWAACDecoder(mime)) {
-        findMatchingCodecs(mime, createEncoder,
-            "OMX.qcom.audio.decoder.multiaac", flags, &matchingCodecs);
-    } else {
         findMatchingCodecs(
             mime, createEncoder, matchComponentName, flags, &matchingCodecs);
-    }
 
     if (matchingCodecs.isEmpty()) {
         ALOGV("No matching codecs! (mime: %s, createEncoder: %s, "
@@ -851,6 +895,19 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
         CHECK(meta->findInt32(kKeySampleRate, &sampleRate));
 
         setRawAudioFormat(kPortIndexInput, sampleRate, numChannels);
+#ifdef DTS_CODEC_M_
+    } else if (!strcasecmp(MEDIA_MIMETYPE_AUDIO_DTS, mMIME)) {
+        ALOGV(" (DTS) mime == MEDIA_MIMETYPE_AUDIO_DTS");
+        int32_t numChannels, sampleRate;
+        CHECK(meta->findInt32(kKeyChannelCount, &numChannels));
+        CHECK(meta->findInt32(kKeySampleRate, &sampleRate));
+
+        status_t err = DTSUtils::setupDecoder(mOMX, mNode, sampleRate);
+
+        if (err != OK) {
+            return err;
+        }
+#endif
     } else {
         if (mIsEncoder && !mIsVideo) {
             int32_t numChannels, sampleRate;
@@ -1034,10 +1091,7 @@ status_t OMXCodec::setVideoPortFormatType(
 }
 
 #ifdef USE_SAMSUNG_COLORFORMAT
-#define ALIGN_TO_8KB(x)   ((((x) + (1 << 13) - 1) >> 13) << 13)
-#define ALIGN_TO_32B(x)   ((((x) + (1 <<  5) - 1) >>  5) <<  5)
-#define ALIGN_TO_128B(x)  ((((x) + (1 <<  7) - 1) >>  7) <<  7)
-#define ALIGN(x, a)       (((x) + (a) - 1) & ~((a) - 1))
+#define ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))
 #endif
 
 static size_t getFrameSize(
@@ -1065,11 +1119,12 @@ static size_t getFrameSize(
 #endif
             return (width * height * 3) / 2;
 #ifdef USE_SAMSUNG_COLORFORMAT
+
         case OMX_SEC_COLOR_FormatNV12LVirtualAddress:
             return ALIGN((ALIGN(width, 16) * ALIGN(height, 16)), 2048) + ALIGN((ALIGN(width, 16) * ALIGN(height >> 1, 8)), 2048);
         case OMX_SEC_COLOR_FormatNV12Tiled:
-            static unsigned int frameBufferYSise = ALIGN_TO_8KB(ALIGN_TO_128B(width) * ALIGN_TO_32B(height));
-            static unsigned int frameBufferUVSise = ALIGN_TO_8KB(ALIGN_TO_128B(width) * ALIGN_TO_32B(height/2));
+            static unsigned int frameBufferYSise = calc_plane(width, height);
+            static unsigned int frameBufferUVSise = calc_plane(width, height >> 1);
             return (frameBufferYSise + frameBufferUVSise);
 #endif
         default:
@@ -1633,9 +1688,10 @@ status_t OMXCodec::setVideoOutputFormat(
             if (mNativeWindow == NULL)
                 format.eColorFormat = OMX_COLOR_FormatYUV420Planar;
             else
-                format.eColorFormat = OMX_COLOR_FormatYUV420SemiPlanar;
+                format.eColorFormat = (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12Tiled;
         }
 #endif
+
 #endif
 
         int32_t colorFormat;
@@ -1781,6 +1837,10 @@ OMXCodec::OMXCodec(
       mSkipCutBuffer(NULL),
       mLeftOverBuffer(NULL),
       mPaused(false),
+#ifdef DOLBY_UDC
+      mDolbyProcessedAudio(false),
+      mDolbyProcessedAudioStateChanged(false),
+#endif // DOLBY_END
       mNativeWindow(
               (!strncmp(componentName, "OMX.google.", 11)
               || !strncmp(componentName, "OMX.ffmpeg.", 11))
@@ -1865,6 +1925,16 @@ void OMXCodec::setComponentRole(
             "video_decoder.mpeg2", "video_encoder.mpeg2" },
         { MEDIA_MIMETYPE_AUDIO_AC3,
             "audio_decoder.ac3", "audio_encoder.ac3" },
+#ifdef DOLBY_UDC
+        { MEDIA_MIMETYPE_AUDIO_EAC3,
+            "audio_decoder.ec3", NULL },
+        { MEDIA_MIMETYPE_AUDIO_EAC3_JOC,
+            "audio_decoder.ec3_joc", NULL },
+#endif // DOLBY_END
+#ifdef DTS_CODEC_M_
+        { MEDIA_MIMETYPE_AUDIO_DTS,
+            "audio_decoder.dts", "audio_encoder.dts" },
+#endif
     };
 
     static const size_t kNumMimeToRole =
@@ -2206,30 +2276,14 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
             def.format.video.nFrameHeight,
             def.format.video.eColorFormat);
 #else
-    OMX_COLOR_FORMATTYPE eColorFormat;
-
-    switch (def.format.video.eColorFormat) {
-    case OMX_SEC_COLOR_FormatNV12TPhysicalAddress:
-        eColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_CUSTOM_YCbCr_420_SP_TILED;
-        break;
-    case OMX_COLOR_FormatYUV420SemiPlanar:
-        eColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_SP;
-        break;
-    case OMX_COLOR_FormatYUV420Planar:
-    default:
-        eColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_P;
-        break;
-    }
+    OMX_COLOR_FORMATTYPE eNativeColorFormat = def.format.video.eColorFormat;
+    setNativeWindowColorFormat(eNativeColorFormat);
 
     err = native_window_set_buffers_geometry(
-            mNativeWindow.get(),
-            def.format.video.nFrameWidth,
-            def.format.video.nFrameHeight,
-            eColorFormat);
-
-    if (mNativeWindow != NULL) {
-        initNativeWindowCrop();
-    }
+    mNativeWindow.get(),
+    def.format.video.nFrameWidth,
+    def.format.video.nFrameHeight,
+    eNativeColorFormat);
 #endif
 
     if (err != 0) {
@@ -2280,8 +2334,14 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
 
     ALOGV("native_window_set_usage usage=0x%lx", usage);
 
+#ifdef EXYNOS4_ENHANCEMENTS
+    err = native_window_set_usage(
+            mNativeWindow.get(), usage | GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_EXTERNAL_DISP
+            | GRALLOC_USAGE_HW_FIMC1 | GRALLOC_USAGE_HWC_HWOVERLAY);
+#else
     err = native_window_set_usage(
             mNativeWindow.get(), usage | GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_EXTERNAL_DISP);
+#endif
 
     if (err != 0) {
         ALOGE("native_window_set_usage failed: %s (%d)", strerror(-err), -err);
@@ -2418,6 +2478,30 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
 
     return err;
 }
+
+#ifdef USE_SAMSUNG_COLORFORMAT
+void OMXCodec::setNativeWindowColorFormat(OMX_COLOR_FORMATTYPE &eNativeColorFormat)
+{
+    // Convert OpenMAX color format to native color format
+    switch (eNativeColorFormat) {
+        // In case of SAMSUNG color format
+        case OMX_SEC_COLOR_FormatNV12TPhysicalAddress:
+            eNativeColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_CUSTOM_YCbCr_420_SP_TILED;
+            break;
+        case OMX_SEC_COLOR_FormatNV12Tiled:
+            eNativeColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED;
+            break;
+        // In case of OpenMAX color formats
+        case OMX_COLOR_FormatYUV420SemiPlanar:
+            eNativeColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_SP;
+            break;
+        case OMX_COLOR_FormatYUV420Planar:
+            default:
+            eNativeColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_P;
+            break;
+    }
+}
+#endif // USE_SAMSUNG_COLORFORMAT
 
 status_t OMXCodec::cancelBufferToNativeWindow(BufferInfo *info) {
     CHECK_EQ((int)info->mStatus, (int)OWNED_BY_US);
@@ -3005,6 +3089,14 @@ void OMXCodec::onEvent(OMX_EVENTTYPE event, OMX_U32 data1, OMX_U32 data2) {
             break;
         }
 #endif
+#ifdef DOLBY_UDC
+        case OMX_EventDolbyProcessedAudio:
+        {
+            mDolbyProcessedAudio = data1;
+            mDolbyProcessedAudioStateChanged = true;
+            break;
+        }
+#endif // DOLBY_END
 #ifdef USE_S3D_SUPPORT
         case (OMX_EVENTTYPE)OMX_EventS3DInformation:
         {
@@ -4691,6 +4783,14 @@ status_t OMXCodec::read(
         initNativeWindowCrop();
         info->mOutputCropChanged = false;
     }
+#ifdef DOLBY_UDC
+    if (mDolbyProcessedAudioStateChanged) {
+        mDolbyProcessedAudioStateChanged = false;
+        return mDolbyProcessedAudio
+            ? INFO_DOLBY_PROCESSED_AUDIO_START
+            : INFO_DOLBY_PROCESSED_AUDIO_STOP;
+    }
+#endif  // DOLBY_END
     return OK;
 }
 

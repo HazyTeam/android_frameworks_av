@@ -267,7 +267,6 @@ status_t AudioPolicyService::getInputForAttr(const audio_attributes_t *attr,
       inputSource = AUDIO_SOURCE_VOICE_RECOGNITION;
 #endif
 
-    audio_io_handle_t input;
     sp<AudioPolicyEffects>audioPolicyEffects;
     {
         Mutex::Autolock _l(mLock);

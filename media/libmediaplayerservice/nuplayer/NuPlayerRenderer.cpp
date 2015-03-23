@@ -26,6 +26,7 @@
 #include <media/stagefright/foundation/AUtils.h>
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/foundation/AWakeLock.h>
+#include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MediaErrors.h>
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/Utils.h>
@@ -33,6 +34,11 @@
 #include <VideoFrameScheduler.h>
 
 #include <inttypes.h>
+#include <ExtendedUtils.h>
+
+#ifdef ENABLE_AV_ENHANCEMENTS
+#include "ExtendedUtils.h"
+#endif
 
 #ifdef ENABLE_AV_ENHANCEMENTS
 #include "ExtendedUtils.h"
@@ -97,7 +103,6 @@ NuPlayer::Renderer::Renderer(
       mLastAudioBufferDrained(0),
       mWakeLock(new AWakeLock()) {
 
-    readProperties();
     notify->findObject(MEDIA_EXTENDED_STATS, (sp<RefBase>*)&mPlayerExtendedStats);
 }
 
@@ -313,8 +318,9 @@ status_t NuPlayer::Renderer::openAudioSink(
         const sp<AMessage> &format,
         bool offloadOnly,
         bool hasVideo,
+        uint32_t flags,
         bool isStreaming,
-        uint32_t flags) {
+        bool *isOffloaded) {
     sp<AMessage> msg = new AMessage(kWhatOpenAudioSink, id());
     msg->setMessage("format", format);
     msg->setInt32("offload-only", offloadOnly);
@@ -362,7 +368,7 @@ void NuPlayer::Renderer::onMessageReceived(const sp<AMessage> &msg) {
             uint32_t isStreaming;
             CHECK(msg->findInt32("isStreaming", (int32_t *)&isStreaming));
 
-            bool offload = onOpenAudioSink(format, offloadOnly, hasVideo, isStreaming, flags);
+            status_t err = onOpenAudioSink(format, offloadOnly, hasVideo, isStreaming, flags);
 
             sp<AMessage> response = new AMessage;
             response->setInt32("err", err);
@@ -743,12 +749,14 @@ bool NuPlayer::Renderer::onDrainAudioQueue() {
 
         if (entry->mOffset == 0) {
             int64_t mediaTimeUs;
+            int32_t eos = 0;
+            int32_t bufferSize = 0;
             CHECK(entry->mBuffer->meta()->findInt64("timeUs", &mediaTimeUs));
-            ALOGV("rendering audio at media time %.2f secs", mediaTimeUs / 1E6);
-
-            int32_t audioEos = 0;
-            if (!(entry->mBuffer->meta()->findInt32("eos", &audioEos) &&
-                audioEos) || entry->mBuffer->size()) {
+            entry->mBuffer->meta()->findInt32("eos", &eos);
+            bufferSize = entry->mBuffer->size();
+            // Do not update mediaTime if the buffer is empty and EOS buffer
+            if (!eos || bufferSize) {
+                ALOGV("rendering audio at media time %.2f secs", mediaTimeUs / 1E6);
                 onNewAudioMediaTime(mediaTimeUs);
             }
         }
@@ -1371,6 +1379,7 @@ void NuPlayer::Renderer::onResume() {
     if (!mVideoQueue.empty()) {
         postDrainVideoQueue_l();
     }
+    PLAYER_STATS(profileStop, STATS_PROFILE_RESUME);
 }
 
 void NuPlayer::Renderer::onSetVideoFrameRate(float fps) {
@@ -1500,6 +1509,7 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
     ALOGV("openAudioSink: offloadOnly(%d) offloadingAudio(%d)",
             offloadOnly, offloadingAudio());
     bool audioSinkChanged = false;
+    bool pcmOffload = false;
 
     int32_t numChannels;
     CHECK(format->findInt32("channel-count", &numChannels));
@@ -1519,6 +1529,21 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
     AString mime;
     CHECK(format->findString("mime", &mime));
 
+#ifdef ENABLE_AV_ENHANCEMENTS
+    pcmOffload = ExtendedUtils::isPcmOffloadEnabled() &&
+            !strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_RAW);
+
+    // At this point we can check if PCM should be offloaded
+    if (!offloadingAudio() && (!offloadOnly && pcmOffload)) {
+        sp<MetaData> aMeta = new MetaData;
+        convertMessageToMetaData(format, aMeta);
+        if  (canOffloadStream(aMeta, false, new MetaData,
+                    true, AUDIO_STREAM_MUSIC)) {
+            mFlags |= FLAG_OFFLOAD_AUDIO;
+        }
+    }
+#endif
+
     if (offloadingAudio()) {
         audio_format_t audioFormat = AUDIO_FORMAT_PCM_16_BIT;
         status_t err = mapMimeToAudioFormat(audioFormat, mime.c_str());
@@ -1528,10 +1553,8 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
                     "audio_format", mime.c_str());
             onDisableOffloadAudio();
         } else {
-
 #ifdef ENABLE_AV_ENHANCEMENTS
-            if (!strcasecmp(mime.c_str(), MEDIA_MIMETYPE_AUDIO_RAW) &&
-                    ExtendedUtils::isPcmOffloadEnabled()) {
+            if (pcmOffload) {
                 if (bitsPerSample > 16) {
                     audioFormat = AUDIO_FORMAT_PCM_24_BIT_OFFLOAD;
                 } else {
@@ -1565,10 +1588,9 @@ status_t NuPlayer::Renderer::onOpenAudioSink(
             offloadInfo.bit_rate = avgBitRate;
             offloadInfo.has_video = hasVideo;
             offloadInfo.is_streaming = isStreaming;
+            offloadInfo.use_small_bufs =
+                (audioFormat == AUDIO_FORMAT_PCM_16_BIT_OFFLOAD);
             offloadInfo.bit_width = bitsPerSample;
-#ifdef ENABLE_AV_ENHANCEMENTS
-            offloadInfo.use_small_bufs = (audioFormat == AUDIO_FORMAT_PCM_16_BIT_OFFLOAD);
-#endif
 
             if (memcmp(&mCurrentOffloadInfo, &offloadInfo, sizeof(offloadInfo)) == 0) {
                 ALOGV("openAudioSink: no change in offload mode");

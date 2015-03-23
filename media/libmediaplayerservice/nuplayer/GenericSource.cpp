@@ -37,15 +37,8 @@
 #include "../../libstagefright/include/NuCachedSource2.h"
 #include "../../libstagefright/include/WVMExtractor.h"
 #include "../../libstagefright/include/HTTPBase.h"
-#ifdef QTI_FLAC_DECODER
-#include "../../libstagefright/include/FLACDecoder.h"
-#endif
 
-static int64_t kLowWaterMarkUs = 2000000ll;  // 2secs
-static int64_t kHighWaterMarkUs = 5000000ll;  // 5secs
-static const size_t kLowWaterMarkBytes = 40000;
-static const size_t kHighWaterMarkBytes = 200000;
-
+#include <ExtendedUtils.h>
 namespace android {
 
 static int64_t kLowWaterMarkUs = 2000000ll;  // 2secs
@@ -232,11 +225,6 @@ status_t NuPlayer::GenericSource::initFromDataSource() {
                 mAudioTrack.mPackets =
                     new AnotherPacketSource(mAudioTrack.mSource->getFormat());
 
-#ifdef QTI_FLAC_DECODER
-                if (!strncasecmp(mime, MEDIA_MIMETYPE_AUDIO_FLAC, 10)) {
-                     mAudioTrack.mSource = new FLACDecoder(track);
-                }
-#endif
                 if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_VORBIS)) {
                     mAudioIsVorbis = true;
                 } else {
@@ -1576,7 +1564,7 @@ void NuPlayer::GenericSource::readBuffer(
                 track->mPackets->queueDiscontinuity( type, NULL, true /* discard */);
             }
 
-            sp<ABuffer> buffer = mediaBufferToABuffer(mbuf, trackType,
+            sp<ABuffer> buffer = mediaBufferToABuffer(mbuf, trackType, seekTimeUs,
                 numBuffers == 0 ? actualTimeUs : NULL);
             track->mPackets->queueAccessUnit(buffer);
             formatChange = false;

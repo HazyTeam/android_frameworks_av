@@ -43,7 +43,8 @@ namespace android {
 #define SONIFICATION_RESPECTFUL_AFTER_MUSIC_DELAY 5000
 // Time in milliseconds during witch some streams are muted while the audio path
 // is switched
-#define MUTE_TIME_MS 500
+//FIXME:: Audio team
+#define MUTE_TIME_MS 2000 //500 ms
 
 #define NUM_TEST_OUTPUTS 5
 
@@ -880,6 +881,30 @@ protected:
         uint32_t        mTestLatencyMs;
 #endif //AUDIO_POLICY_TEST
 
+#ifdef HDMI_PASSTHROUGH_ENABLED
+        void checkAndSuspendOutputs();
+        void checkAndRestoreOutputs();
+        audio_devices_t handleHDMIPassthrough(audio_devices_t device,
+                         audio_io_handle_t output,
+                         int stream = -1,
+                         int strategy = -1);
+        audio_io_handle_t getPassthroughOutput(
+                                    audio_stream_type_t stream,
+                                    uint32_t samplingRate,
+                                    audio_format_t format,
+                                    audio_channel_mask_t channelMask,
+                                    audio_output_flags_t flags,
+                                    const audio_offload_info_t *offloadInfo,
+                                    audio_devices_t device);
+        bool isEffectEnabled();
+        void closeOffloadOutputs();
+        void updateAndCloseOutputs();
+        bool isHDMIPassthroughEnabled();
+#endif
+        uint32_t mPrimarySuspended;
+        uint32_t mFastSuspended;
+        uint32_t mMultiChannelSuspended;
+
         // returns true if given output is direct output
         bool isDirectOutput(audio_io_handle_t output);
         //parameter indicates of HDMI speakers disabled
@@ -919,7 +944,6 @@ private:
                 const audio_offload_info_t *offloadInfo);
         // internal function to derive a stream type value from audio attributes
         audio_stream_type_t streamTypefromAttributesInt(const audio_attributes_t *attr);
-
         // Used for voip + voice concurrency usecase
         int mPrevPhoneState;
         int mvoice_call_state;
@@ -927,6 +951,32 @@ private:
         // Used for record + playback concurrency
         bool mIsInputRequestOnProgress;
 #endif
+
+#if defined(DOLBY_UDC) || defined(DOLBY_DAP_MOVE_EFFECT)
+protected:
+#include "DolbyAudioPolicy.h"
+        DolbyAudioPolicy mDolbyAudioPolicy;
+#endif // DOLBY_END
+        // return true if any output is playing anything besides the stream to ignore
+        bool isAnyOutputActive(audio_stream_type_t streamToIgnore);
+        // event is one of STARTING_OUTPUT, STARTING_BEACON, STOPPING_OUTPUT, STOPPING_BEACON
+        // returns 0 if no mute/unmute event happened, the largest latency of the device where
+        //   the mute/unmute happened
+        uint32_t handleEventForBeacon(int event);
+        uint32_t setBeaconMute(bool mute);
+        bool     isValidAttributes(const audio_attributes_t *paa);
+
+        // select input device corresponding to requested audio source and return associated policy
+        // mix if any. Calls getDeviceForInputSource().
+        audio_devices_t getDeviceAndMixForInputSource(audio_source_t inputSource,
+                                                        AudioMix **policyMix = NULL);
+
+        // Called by setDeviceConnectionState().
+        status_t setDeviceConnectionStateInt(audio_devices_t device,
+                                                          audio_policy_dev_state_t state,
+                                                          const char *device_address);
+        sp<DeviceDescriptor>  getDeviceDescriptor(const audio_devices_t device,
+                                                  const char *device_address);
 
 };
 
