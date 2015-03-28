@@ -318,8 +318,8 @@ status_t AudioPolicyManager::setDeviceConnectionState(audio_devices_t device,
                                                           audio_policy_dev_state_t state,
                                                   const char *device_address)
 {
-    String8 address = (device_address == NULL) ? String8("") : String8(device_address);
-    AudioParameter param;
+    return setDeviceConnectionStateInt(device, state, device_address);
+}
 
 status_t AudioPolicyManager::setDeviceConnectionStateInt(audio_devices_t device,
                                                          audio_policy_dev_state_t state,
