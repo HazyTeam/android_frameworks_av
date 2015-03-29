@@ -3239,7 +3239,6 @@ return false;
                property_get("audio.offload.pcm.24bit.enable", propValue, NULL)) {
             prop_enabled = atoi(propValue) || !strncmp("true", propValue, 4);
         }
-#endif
 
         if (prop_enabled) {
             ALOGI("PCM offload property is enabled");
@@ -3251,6 +3250,7 @@ return false;
             return false;
         }
     }
+#endif
 
     if (!pcmOffload) {
         // Check if offload has been disabled
@@ -6731,7 +6731,6 @@ const AudioPolicyManager::VolumeCurvePoint
         sFullScaleVolumeCurve, // DEVICE_CATEGORY_EARPIECE
         sFullScaleVolumeCurve  // DEVICE_CATEGORY_EXT_MEDIA
     },
-#endif
 };
 
 void AudioPolicyManager::initializeVolumeCurves()
